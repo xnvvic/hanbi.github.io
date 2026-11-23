@@ -306,12 +306,13 @@
       </details>
       <div class="benchmark" aria-labelledby="benchmark-title">
         <h3 id="benchmark-title">정렬 방식에 따라 속도는 얼마나 달라질까요?</h3>
-        <p>같은 날짜 레코드 3,000개로 버블 정렬과 병합 정렬을 각각 5회 실행하고, 걸린 시간의 중앙값을 비교합니다. 결과는 사용하는 기기와 브라우저에 따라 달라집니다.</p>
+        <p>화면에 있는 학습 노트를 그대로 제목순(A–Z)으로 정렬합니다. 버블 정렬과 병합 정렬을 각각 5회 실행한 정렬 계산 시간의 중앙값이며, 화면을 읽거나 다시 그리는 시간은 제외합니다.</p>
         <button class="button" id="benchmark-run" type="button" aria-controls="benchmark-results">속도 비교 측정</button>
         <p id="benchmark-status" role="status" aria-live="polite">버튼을 누르면 현재 브라우저에서 직접 측정합니다.</p>
         <div id="benchmark-results" hidden>
+          <p id="benchmark-input"></p>
           <table>
-            <caption>동일 데이터 정렬 시간 · 5회 중앙값</caption>
+            <caption>실제 학습 노트 제목순 정렬 · 5회 중앙값</caption>
             <thead><tr><th scope="col">비교 대상</th><th scope="col">정렬 시간</th></tr></thead>
             <tbody>
               <tr><th scope="row">Before · 버블 정렬 기준선</th><td id="bubble-time"></td></tr>
@@ -319,7 +320,7 @@
             </tbody>
           </table>
         </div>
-        <p>이전 페이지에는 정렬 기능이 없었으므로 Before는 비교를 위해 구현한 버블 정렬 기준선입니다. 화면 재배치 시간은 제외하며, 정렬 함수 내부의 배열 생성 시간은 포함합니다.</p>
+        <p>Before는 비교용 버블 정렬, After는 이 사이트의 병합 정렬입니다. 노트 수가 적어 0ms로 표시될 수 있으며, 이는 브라우저 타이머로 구분할 만큼의 시간이 측정되지 않았다는 뜻입니다. 작은 측정 차이로 성능의 우열을 단정하지 않습니다.</p>
       </div>
     </section>
 
@@ -416,23 +417,17 @@ function bubbleSort(items, compare) {
 }
 
 function benchmarkNotes() {
-  const size = 3000;
   const runs = 5;
-  const seed = 20261123;
-  let state = seed;
-  // An unsigned 32-bit LCG makes the same unsorted records on every run.
-  function randomUint32() {
-    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
-    return state;
-  }
-  const epoch = Date.UTC(2020, 0, 1);
-  const source = Array.from({ length: size }, (_, id) => Object.freeze({
+  // 실제 화면의 노트만 읽습니다. 생성 데이터나 복제한 추가 레코드는 없습니다.
+  const source = Array.from(document.querySelectorAll("#notes-grid .note"), (element, id) => Object.freeze({
     id,
-    date: new Date(epoch + (randomUint32() % 3653) * 86400000)
-      .toISOString().slice(0, 10)
+    element,
+    title: element.dataset.title,
+    date: element.dataset.date
   }));
+  const size = source.length;
   const original = source.slice();
-  const compare = noteComparators.newest;
+  const compare = noteComparators.title;
 
   function assertUnchanged(input, expected) {
     if (input.length !== expected.length ||
@@ -460,15 +455,6 @@ function benchmarkNotes() {
       throw new Error("The benchmark result contains duplicate records.");
     }
   }
-
-  // Warm up each implementation using 128 records. Exclude this from timing.
-  const warmBubbleInput = source.slice(0, 128);
-  const warmMergeInput = source.slice(0, 128);
-  const warmBubble = bubbleSort(warmBubbleInput, compare);
-  const warmMerged = mergeSort(warmMergeInput, compare);
-  assertUnchanged(warmBubbleInput, source.slice(0, 128));
-  assertUnchanged(warmMergeInput, source.slice(0, 128));
-  assertResults(warmBubble, warmMerged, 128);
 
   const bubbleTimes = [];
   const mergeTimes = [];
@@ -525,20 +511,20 @@ function benchmarkNotes() {
   return {
     size,
     runs,
-    seed,
     bubbleMs,
     mergeMs,
-    // A zero timer result means the resolution is insufficient: never invent it.
-    speedup: mergeMs > 0 ? bubbleMs / mergeMs : null,
     bubbleTimes,
     mergeTimes,
+    inputOrder: source.map(note => note.title),
+    outputOrder: mergeSort(source, compare).map(note => note.title),
     method: "Before = bubble-sort comparison baseline; After = website merge sort. " +
-      "3,000 deterministic ISO-date records (seed 20261123), newest first, " +
-      "same comparator, 128-record warm-up, five trials in alternating order; " +
+      "Only the actual note elements currently displayed on this page, title A-Z, " +
+      "same comparator and current DOM order for both algorithms; five trials in alternating order; " +
       "median milliseconds measured with performance.now(). " +
       "Input preparation, verification and rendering excluded; allocations " +
       "inside each pure sorting function included. Results and input " +
-      "nonmutation verified. Timings depend on the device and runtime."
+      "nonmutation verified. No generated records or amplified workload. " +
+      "Zero milliseconds can be below timer resolution."
   };
 }
 
@@ -548,16 +534,15 @@ function benchmarkNotes() {
       const status = document.getElementById("benchmark-status");
       button.addEventListener("click", async () => {
         button.disabled = true;
-        status.textContent = "같은 데이터로 두 정렬 방식을 측정하고 있습니다…";
+        status.textContent = "화면의 학습 노트를 두 정렬 방식으로 측정하고 있습니다…";
         await new Promise(resolve => setTimeout(resolve, 30));
         try {
           const result = benchmarkNotes();
           document.getElementById("bubble-time").textContent = result.bubbleMs.toFixed(3) + " ms";
           document.getElementById("merge-time").textContent = result.mergeMs.toFixed(3) + " ms";
+          document.getElementById("benchmark-input").textContent = "대상: 실제 노트 " + result.size + "개 · 입력 순서: " + result.inputOrder.join(" / ") + " · 기준: 제목순 A–Z";
           document.getElementById("benchmark-results").hidden = false;
-          status.textContent = result.speedup !== null
-            ? "측정 완료 · 버블 정렬 시간 ÷ 병합 정렬 시간 = " + result.speedup.toFixed(2) + "배 · 정렬 결과 일치 확인"
-            : "측정 완료 · 타이머 해상도가 부족해 시간 비율을 계산할 수 없습니다.";
+          status.textContent = "측정 완료 · 실제 노트 " + result.size + "개 · 두 정렬 결과 일치 확인";
           document.getElementById("benchmark-results").dataset.raw = JSON.stringify(result);
         } catch (error) {
           status.textContent = "측정 중 오류가 발생했습니다. 다시 시도해 주세요.";
